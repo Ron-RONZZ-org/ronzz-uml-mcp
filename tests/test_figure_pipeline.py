@@ -103,7 +103,7 @@ def test_available_diagram_types_drops_unprobed_companion(monkeypatch):
     monkeypatch.setenv("MCP_DIAGRAM_PROBE", "true")
     monkeypatch.setattr(config, "_probe_companion_types", lambda server: {"bpmn"})
     monkeypatch.setattr(config, "_probe_done", False)
-    monkeypatch.setattr(config, "_probe_attempted_at", 0.0)
+    monkeypatch.setattr(config, "_probe_attempted_at", None)
     monkeypatch.setattr(config, "_unavailable_types", set())
 
     names = config.MCP_SETTINGS.available_diagram_types()

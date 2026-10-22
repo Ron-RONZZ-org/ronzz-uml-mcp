@@ -115,7 +115,7 @@ COMPANION_DIAGRAM_TYPES = ("mermaid", "bpmn", "excalidraw")
 _PROBE_RETRY_SECONDS = 60.0
 _probe_lock = threading.Lock()
 _probe_done = False
-_probe_attempted_at = 0.0
+_probe_attempted_at: Optional[float] = None
 _unavailable_types: set[str] = set()
 
 
@@ -155,7 +155,8 @@ def _available_diagram_types(settings: "MCPSettings") -> Dict[str, DiagramType]:
         return settings.diagram_types
     with _probe_lock:
         now = time.monotonic()
-        if not _probe_done and now - _probe_attempted_at >= _PROBE_RETRY_SECONDS:
+        due = _probe_attempted_at is None or now - _probe_attempted_at >= _PROBE_RETRY_SECONDS
+        if not _probe_done and due:
             _probe_attempted_at = now
             probed = _probe_companion_types(settings.kroki_server)
             if probed is not None:

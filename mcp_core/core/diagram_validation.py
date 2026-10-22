@@ -14,8 +14,6 @@ from typing import Any, Dict, List
 
 from pydantic import ValidationError
 
-from ..tools.schemas import GenerateUMLInput
-
 from .config import MCP_SETTINGS
 from .diagram_rendering import prepare_diagram_code
 
@@ -171,6 +169,8 @@ def validate_uml_inputs(
     what the renderer accepts, not a syntax heuristic. Returns valid, errors,
     suggestions, backend, diagram_type, prepared_code, compiled, and compile_ms.
     """
+    from ..tools.schemas import GenerateUMLInput
+
     try:
         validated = GenerateUMLInput(
             diagram_type=diagram_type,
