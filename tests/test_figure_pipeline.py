@@ -153,3 +153,19 @@ def test_probe_fails_open_when_kroki_unreachable(monkeypatch):
 
     monkeypatch.setattr(httpx, "Client", lambda **kwargs: _DownClient({}))
     assert config._probe_companion_types("http://kroki:8000") is None
+
+
+def test_syntax_error_includes_the_renderer_log():
+    import httpx
+
+    from mcp_core.core.diagram_rendering import _handle_diagram_error
+    from tools.kroki.kroki import KrokiHTTPError
+
+    response = httpx.Response(
+        400, request=httpx.Request("GET", "http://kroki/tikz/svg/x")
+    )
+    error = KrokiHTTPError(
+        response, b"Error 400: ! LaTeX Error: Missing \\begin{document}."
+    )
+    message = _handle_diagram_error(error, "code")
+    assert "Missing" in message

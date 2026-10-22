@@ -118,6 +118,14 @@ def _handle_diagram_error(e: Exception, code: str) -> str:
                 "network connectivity."
             )
         if status == 400:
+            # The renderer's own diagnostic (LaTeX log, PlantUML error, ...) is
+            # what lets a caller fix the code; a canned sentence does not.
+            detail = getattr(e, "content", b"")
+            if isinstance(detail, bytes):
+                detail = detail.decode("utf-8", "replace")
+            detail = (detail or "").strip()
+            if detail:
+                return f"Diagram code syntax error. Renderer said: {detail[:1500]}"
             return (
                 "Diagram code syntax error. Check examples at uml://examples resource "
                 "for valid syntax."
