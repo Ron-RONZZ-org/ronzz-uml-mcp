@@ -29,7 +29,8 @@ def test_root_endpoint():
     assert data.get("kroki_encode") == "/kroki_encode"
     assert data.get("status_page") == "/status"
     assert "Link" in response.headers
-    assert response.headers.get("Vary") == "Accept"
+    # CORS middleware appends Origin to Vary (pre-existing upstream expectation).
+    assert response.headers.get("Vary") == "Accept, Origin"
     link = response.headers["Link"]
     assert 'rel="api-catalog"' in link
     assert 'rel="service-desc"' in link
@@ -277,7 +278,9 @@ def test_kroki_encode_tikz_snippet_wraps_standalone():
     mock_kroki_instance.get_url.assert_called_once()
     _dtype, diagram_text, _fmt = mock_kroki_instance.get_url.call_args[0]
     assert _dtype == "tikz"
-    assert r"\documentclass" in diagram_text
+    # Kroki prepends its own standalone class; the class line is stripped.
+    assert r"\documentclass" not in diagram_text
+    assert r"\begin{document}" in diagram_text
     assert r"\begin{tikzpicture}" in diagram_text
 
 

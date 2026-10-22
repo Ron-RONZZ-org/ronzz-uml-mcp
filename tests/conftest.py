@@ -42,3 +42,19 @@ def reset_mcp_server_singleton():
         yield
     finally:
         server_module._mcp_server = old
+
+
+@pytest.fixture(autouse=True)
+def _no_companion_probe(monkeypatch):
+    """Keep unit tests off the network: no Kroki availability probe."""
+    monkeypatch.setenv("MCP_DIAGRAM_PROBE", "false")
+
+
+@pytest.fixture(autouse=True)
+def _stub_diagram_compile(monkeypatch):
+    """Validation compiles on Kroki; unit tests stub the compile step."""
+    from mcp_core.core import diagram_validation
+
+    monkeypatch.setattr(
+        diagram_validation, "_compile_errors", lambda cfg, prepared: ([], 0.0)
+    )

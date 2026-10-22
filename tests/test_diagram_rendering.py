@@ -51,15 +51,19 @@ def test_prepare_diagram_code_mermaid_strip_only():
 def test_prepare_diagram_code_tikz_wraps_snippet():
     snippet = r"\begin{tikzpicture}\draw (0,0)--(1,1);\end{tikzpicture}"
     out = prepare_diagram_code(snippet, "tikz", None)
-    assert out.startswith("\\documentclass")
+    # Kroki supplies the standalone class; the prepared code must not carry one.
+    assert "\\documentclass" not in out
+    assert out.startswith("\\usepackage{tikz}")
     assert "\\begin{document}" in out
     assert "\\end{document}" in out
 
 
-def test_prepare_diagram_code_tikz_full_document_unchanged():
-    full = r"\documentclass{standalone}\usepackage{tikz}\begin{document}x\end{document}"
+def test_prepare_diagram_code_tikz_strips_documentclass():
+    full = r"\documentclass[border=2pt]{standalone}\usepackage{chemfig}\begin{document}x\end{document}"
     out = prepare_diagram_code(full, "tikz", None)
-    assert out == full
+    assert "\\documentclass" not in out
+    assert r"\usepackage{chemfig}" in out
+    assert "\\begin{document}" in out
 
 
 def test_try_kroki_render_success():

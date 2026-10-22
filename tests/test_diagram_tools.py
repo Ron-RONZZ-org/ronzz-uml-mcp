@@ -44,6 +44,7 @@ class TestDiagramTools:
             "generate_uml_batch",
             "generate_uml",
             "validate_uml",
+            "render_diagram",
         ]
 
         for tool_name in expected_tools:
