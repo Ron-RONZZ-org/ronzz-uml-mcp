@@ -1,12 +1,15 @@
 """
-Local validation for diagram code before render (no network calls).
+Validation for diagram code: local structural checks, then a real Kroki compile.
 
-Reuses GenerateUMLInput for type/format/length rules, then applies light structural checks.
+Reuses GenerateUMLInput for type/format/length rules, applies light structural
+checks as a cheap pre-pass, and always compiles the prepared code so a
+``valid`` answer is backed by the renderer rather than by heuristics.
 """
 
 from __future__ import annotations
 
 import re
+import time
 from typing import Any, Dict, List
 
 from pydantic import ValidationError
@@ -133,6 +136,27 @@ def _suggestions_for_errors(errors: List[str]) -> List[str]:
     return list(dict.fromkeys(sug))
 
 
+def _compile_errors(cfg: Any, prepared_code: str) -> tuple[List[str], float]:
+    """Compile the prepared code on Kroki and return (errors, compile_ms)."""
+    from tools.kroki.kroki import Kroki, KrokiError, KrokiHTTPError
+
+    client = Kroki(MCP_SETTINGS.kroki_server)
+    started = time.perf_counter()
+    try:
+        client.generate_diagram(cfg.backend, prepared_code, "svg")
+    except KrokiHTTPError as exc:
+        detail = exc.content
+        if isinstance(detail, bytes):
+            detail = detail.decode("utf-8", "replace")
+        message = (detail or "").strip() or f"HTTP {exc.response.status_code}"
+        return [message[:2000]], (time.perf_counter() - started) * 1000
+    except KrokiError as exc:
+        return [f"Render failed: {exc}"[:2000]], (time.perf_counter() - started) * 1000
+    finally:
+        client.client.close()
+    return [], (time.perf_counter() - started) * 1000
+
+
 def validate_uml_inputs(
     diagram_type: str,
     code: str,
@@ -140,10 +164,12 @@ def validate_uml_inputs(
     strict: bool = False,
 ) -> Dict[str, Any]:
     """
-    Validate diagram inputs without calling Kroki or other renderers.
+    Validate diagram inputs and compile them on Kroki.
 
-    Returns a dict with valid, errors, suggestions, backend, diagram_type, and prepared_code
-    (when schema validation passed).
+    Structural checks run first as a cheap pre-pass; when they pass, the
+    prepared code is rendered. The result's ``valid`` flag therefore reflects
+    what the renderer accepts, not a syntax heuristic. Returns valid, errors,
+    suggestions, backend, diagram_type, prepared_code, compiled, and compile_ms.
     """
     try:
         validated = GenerateUMLInput(
@@ -181,6 +207,12 @@ def validate_uml_inputs(
         elif cfg.backend == "d2":
             extra.extend(_structural_errors_strict_d2(prepared))
     all_errors = structural + extra
+    compile_ms = 0.0
+    compiled = False
+    if not all_errors:
+        compile_errors, compile_ms = _compile_errors(cfg, prepared)
+        all_errors += compile_errors
+        compiled = True
     valid = len(all_errors) == 0
 
     return {
@@ -192,4 +224,6 @@ def validate_uml_inputs(
         "corrected_code": prepared if prepared != validated.code.strip() else None,
         "prepared_code": prepared,
         "strict": strict,
+        "compiled": compiled,
+        "compile_ms": round(compile_ms, 2),
     }

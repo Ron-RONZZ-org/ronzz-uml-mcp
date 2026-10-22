@@ -2,9 +2,12 @@
 MCP tools for diagram generation using the decorator pattern.
 """
 
+import json
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from mcp.types import ImageContent, TextContent
 from pydantic import ValidationError
 
 from ..core.config import MCP_SETTINGS
@@ -164,8 +167,10 @@ def generate_uml(
 
 @mcp_tool(
     description=(
-        "Validate diagram type, format, code length, and basic syntax locally before render "
-        "(no Kroki call). Returns errors and suggestions."
+        "Validate a diagram by compiling it on the renderer. Runs local structure "
+        "checks first, then a real Kroki compile, so `valid` reflects what the "
+        "renderer accepts (a TikZ figure that does not compile is reported invalid). "
+        "Returns errors, suggestions, compiled, and compile_ms."
     ),
     category="uml",
     example="validate_uml('class', '@startuml\\nclass A\\n@enduml', 'svg')",
@@ -177,7 +182,7 @@ def validate_uml(
     output_format: str = "svg",
     strict: bool = False,
 ) -> Dict[str, Any]:
-    """Check inputs and light structure without rendering."""
+    """Compile the diagram on Kroki and report renderer-accepted validity."""
     logger.info(
         "Called validate_uml tool: type=%s, code length=%s, strict=%s",
         diagram_type,
@@ -185,6 +190,120 @@ def validate_uml(
         strict,
     )
     return validate_uml_inputs(diagram_type, code, output_format, strict=strict)
+
+
+_IMAGE_MIME_BY_FORMAT = {
+    "svg": "image/svg+xml",
+    "png": "image/png",
+    "jpeg": "image/jpeg",
+}
+
+
+def _summary_text(payload: Dict[str, Any]) -> TextContent:
+    return TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))
+
+
+@mcp_tool(
+    description=(
+        "Render a diagram and return it as an MCP image plus the server-side file path. "
+        "Use this instead of generate_uml when the figure should appear in chat or be "
+        "uploaded: the image needs no base64 copying in the conversation, and local_path "
+        "is a file the wiki writer can upload directly."
+    ),
+    category="uml",
+    example=(
+        "render_diagram('tikz', r'\\begin{tikzpicture}\\draw (0,0) -- (1,1);"
+        "\\end{tikzpicture}')"
+    ),
+    annotations=ANNOTATIONS_DIAGRAM,
+)
+def render_diagram(
+    diagram_type: str,
+    code: str,
+    output_format: str = "svg",
+    theme: Optional[str] = None,
+    scale: float = 1.0,
+) -> List[Any]:
+    """Render to ``MCP_SETTINGS.output_dir``; return [text summary, image]."""
+    logger.info(
+        "Called render_diagram: type=%s, format=%s, code length=%s",
+        diagram_type,
+        output_format,
+        len(code or ""),
+    )
+    out = generate_from_request(
+        DiagramRequest(
+            diagram_type=diagram_type,
+            code=code,
+            output_dir=MCP_SETTINGS.output_dir,
+            output_format=output_format,
+            theme=theme,
+            scale=scale,
+        )
+    )
+
+    if out.get("error"):
+        return [
+            _summary_text(
+                {
+                    "error": out["error"],
+                    "diagram_type": diagram_type,
+                    "local_path": None,
+                }
+            )
+        ]
+
+    local_path = out.get("local_path")
+    if not local_path:
+        return [
+            _summary_text(
+                {
+                    "error": (
+                        "The renderer produced no file. Set MCP_OUTPUT_DIR (or "
+                        "UML_MCP_OUTPUT_DIR) to a writable directory."
+                    ),
+                    "diagram_type": diagram_type,
+                    "local_path": None,
+                }
+            )
+        ]
+
+    try:
+        content = Path(local_path).read_bytes()
+    except OSError as exc:
+        return [
+            _summary_text(
+                {
+                    "error": f"Rendered, but the file could not be read back: {exc}",
+                    "diagram_type": diagram_type,
+                    "local_path": local_path,
+                }
+            )
+        ]
+
+    mime_type = _IMAGE_MIME_BY_FORMAT.get(output_format.lower())
+    summary = {
+        "diagram_type": diagram_type,
+        "output_format": output_format,
+        "local_path": local_path,
+        "bytes": len(content),
+        "mime_type": mime_type or out.get("mime_type"),
+        "render_ms": out.get("render_ms"),
+    }
+
+    if mime_type is None:
+        return [_summary_text(summary)]
+
+    import base64
+
+    return [
+        _summary_text(summary),
+        ImageContent(
+            type="image",
+            data=base64.b64encode(content).decode("ascii"),
+            mimeType=mime_type,
+        ),
+    ]
 
 
 def register_diagram_tools(server: Any) -> List[str]:
