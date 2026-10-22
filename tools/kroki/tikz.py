@@ -83,44 +83,31 @@ _USETIKZLIBRARY_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
-# Whole-line preamble directives to hoist out of the document body (snippet mode)
-_USETIKZLIBRARY_LINE_RE = re.compile(
-    r"^\s*\\usetikzlibrary\s*\{[^}]*\}\s*$", re.IGNORECASE
+# Preamble-only directives. Hoisted wherever they appear in the snippet, so
+# `\usepackage{chemfig}\begin{tikzpicture}` on one line also works. Every
+# `\usepackage` is hoisted, not just tikz/pgfplots: emitted inside
+# `\begin{document}` they fail with "Can be used only in preamble".
+_PREAMBLE_DIRECTIVE_RE = re.compile(
+    r"\\(?:usepackage|usetikzlibrary|pgfplotsset)\s*(?:\[[^\]]*\]\s*)?\{[^}]*\}",
+    re.IGNORECASE,
 )
 _USEPACKAGE_TIKZ_LINE_RE = re.compile(
-    r"^\s*\\usepackage\s*(?:\[[^\]]*\])?\s*\{\s*tikz\s*\}\s*$", re.IGNORECASE
+    r"^\\usepackage\s*(?:\[[^\]]*\])?\s*\{\s*tikz\s*\}$", re.IGNORECASE
 )
 _USEPACKAGE_PGFPLOTS_LINE_RE = re.compile(
-    r"^\s*\\usepackage\s*\{\s*pgfplots\s*\}\s*$", re.IGNORECASE
+    r"^\\usepackage\s*\{\s*pgfplots\s*\}$", re.IGNORECASE
 )
-# Any package line (chemfig, mhchem, circuitikz, ...) is preamble-only in LaTeX.
-_USEPACKAGE_LINE_RE = re.compile(r"^\s*\\usepackage\b", re.IGNORECASE)
-_PGFPLOTSSET_LINE_RE = re.compile(r"^\s*\\pgfplotsset\b", re.IGNORECASE)
+_PGFPLOTSSET_LINE_RE = re.compile(r"^\\pgfplotsset\b", re.IGNORECASE)
 
 
 def _split_preamble_lines(snippet: str) -> tuple[str, List[str]]:
-    """Split a snippet into (body, preamble lines).
-
-    Packages, TikZ libraries and ``\\pgfplotsset`` are preamble-only: emitted
-    inside ``\\begin{document}`` they fail ("Can be used only in preamble").
-    Every ``\\usepackage`` is hoisted, not just tikz/pgfplots, so a model can
-    ask for ``chemfig`` or ``circuitikz`` in a snippet without writing a full
-    document.
+    """Split a snippet into (body, preamble directives).
 
     Returns (body, preamble_lines).
     """
-    body: List[str] = []
-    preamble: List[str] = []
-    for line in snippet.splitlines():
-        if (
-            _USEPACKAGE_LINE_RE.match(line)
-            or _USETIKZLIBRARY_LINE_RE.match(line)
-            or _PGFPLOTSSET_LINE_RE.match(line)
-        ):
-            preamble.append(line.strip())
-            continue
-        body.append(line)
-    return "\n".join(body).strip(), preamble
+    preamble = [match.group(0).strip() for match in _PREAMBLE_DIRECTIVE_RE.finditer(snippet)]
+    body = _PREAMBLE_DIRECTIVE_RE.sub("", snippet)
+    return body.strip(), preamble
 
 
 def strip_tikz_documentclass(code: str) -> str:

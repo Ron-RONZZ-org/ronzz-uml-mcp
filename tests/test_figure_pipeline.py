@@ -32,6 +32,15 @@ def test_wrap_hoists_tikz_library_and_pgfplotsset():
     assert "\\pgfplotsset" not in body
 
 
+def test_wrap_hoists_a_package_written_mid_line():
+    snippet = "\\usepackage{chemfig}\\begin{tikzpicture}\\chemfig{A-B}\\end{tikzpicture}"
+    out = wrap_tikz_standalone(snippet)
+    preamble, body = out.split("\\begin{document}", 1)
+    assert "\\usepackage{chemfig}" in preamble
+    assert "\\usepackage" not in body
+    assert "\\begin{tikzpicture}" in body
+
+
 def test_wrap_pgfplots_package_not_emitted_as_library():
     snippet = "\\begin{axis}\\addplot {x^2};\\end{axis}"
     out = wrap_tikz_standalone(snippet)
