@@ -10,7 +10,7 @@ from .config import MCP_SETTINGS
 def get_diagram_types_dict() -> Dict[str, Any]:
     """Return the same structure as the uml://types JSON object (before stringification)."""
     types: Dict[str, Any] = {}
-    for name, config in MCP_SETTINGS.diagram_types.items():
+    for name, config in MCP_SETTINGS.available_diagram_types().items():
         types[name] = {
             "backend": config.backend,
             "description": config.description,

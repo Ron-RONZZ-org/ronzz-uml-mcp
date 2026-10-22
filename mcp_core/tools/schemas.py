@@ -52,7 +52,7 @@ class GenerateUMLInput(BaseModel):
             raise ValueError("diagram_type cannot be empty")
         from ..core.config import MCP_SETTINGS
 
-        if key not in MCP_SETTINGS.diagram_types:
+        if key not in MCP_SETTINGS.available_diagram_types():
             raise ValueError(
                 f"Unsupported diagram type: {v.strip()}. Use uml://types resource for valid types."
             )
@@ -139,7 +139,7 @@ class ValidateUMLInput(BaseModel):
             raise ValueError("diagram_type cannot be empty")
         from ..core.config import MCP_SETTINGS
 
-        if key not in MCP_SETTINGS.diagram_types:
+        if key not in MCP_SETTINGS.available_diagram_types():
             raise ValueError(
                 f"Unsupported diagram type: {v.strip()}. Use uml://types resource for valid types."
             )

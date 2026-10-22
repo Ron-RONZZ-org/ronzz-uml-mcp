@@ -2,13 +2,18 @@
 Configuration settings for MCP server.
 """
 
+import logging
 import os
+import threading
+import time
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 from tools.kroki.kroki import LANGUAGE_OUTPUT_SUPPORT
+
+logger = logging.getLogger(__name__)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -103,6 +108,72 @@ class DiagramType(BaseModel):
     formats: List[str] = ["png", "svg"]
 
 
+# Kroki serves these through *companion* containers. Every other backend is
+# baked into the core image, so only these can be missing at runtime. An absent
+# companion answers 503 (or 404) instead of rendering.
+COMPANION_DIAGRAM_TYPES = ("mermaid", "bpmn", "excalidraw")
+_PROBE_RETRY_SECONDS = 60.0
+_probe_lock = threading.Lock()
+_probe_done = False
+_probe_attempted_at = 0.0
+_unavailable_types: set[str] = set()
+
+
+def _probe_companion_types(kroki_server: str) -> Optional[set[str]]:
+    """Return the companion types Kroki cannot serve, or None when unreachable."""
+    import httpx
+
+    unavailable: set[str] = set()
+    timeout = httpx.Timeout(connect=1.0, read=2.0, write=2.0, pool=1.0)
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            for diagram_type in COMPANION_DIAGRAM_TYPES:
+                response = client.post(
+                    f"{kroki_server.rstrip('/')}/{diagram_type}/svg", content=b"x"
+                )
+                if response.status_code in (404, 503):
+                    unavailable.add(diagram_type)
+                logger.info(
+                    "Diagram availability probe: %s -> HTTP %s",
+                    diagram_type,
+                    response.status_code,
+                )
+    except httpx.HTTPError as exc:
+        logger.warning(
+            "Diagram availability probe could not reach Kroki at %s: %s",
+            kroki_server,
+            exc,
+        )
+        return None
+    return unavailable
+
+
+def _available_diagram_types(settings: "MCPSettings") -> Dict[str, DiagramType]:
+    """Diagram types the deployment can render, probed once against Kroki."""
+    global _probe_done, _probe_attempted_at, _unavailable_types
+    if not _env_bool("MCP_DIAGRAM_PROBE", True):
+        return settings.diagram_types
+    with _probe_lock:
+        now = time.monotonic()
+        if not _probe_done and now - _probe_attempted_at >= _PROBE_RETRY_SECONDS:
+            _probe_attempted_at = now
+            probed = _probe_companion_types(settings.kroki_server)
+            if probed is not None:
+                _unavailable_types = probed
+                _probe_done = True
+                if probed:
+                    logger.warning(
+                        "Diagram types disabled (companion container missing): %s",
+                        ", ".join(sorted(probed)),
+                    )
+        unavailable = set(_unavailable_types)
+    return {
+        name: config
+        for name, config in settings.diagram_types.items()
+        if name not in unavailable
+    }
+
+
 class MCPSettings(BaseModel):
     """Configuration settings for MCP server."""
 
@@ -143,6 +214,14 @@ class MCPSettings(BaseModel):
     def output_path(self) -> Path:
         """Output directory as a Path for file operations."""
         return Path(self.output_dir)
+
+    def available_diagram_types(self) -> Dict[str, DiagramType]:
+        """Diagram types this deployment can actually render.
+
+        Companion-served types (mermaid, bpmn, excalidraw) are withheld when
+        their container is not running in front of this Kroki.
+        """
+        return _available_diagram_types(self)
 
 
 # Define supported diagram types with their backends. Formats from https://kroki.io/
