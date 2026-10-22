@@ -88,32 +88,55 @@ _USETIKZLIBRARY_LINE_RE = re.compile(
     r"^\s*\\usetikzlibrary\s*\{[^}]*\}\s*$", re.IGNORECASE
 )
 _USEPACKAGE_TIKZ_LINE_RE = re.compile(
-    r"^\s*\\usepackage\s*\{\s*tikz\s*\}\s*$", re.IGNORECASE
+    r"^\s*\\usepackage\s*(?:\[[^\]]*\])?\s*\{\s*tikz\s*\}\s*$", re.IGNORECASE
 )
 _USEPACKAGE_PGFPLOTS_LINE_RE = re.compile(
     r"^\s*\\usepackage\s*\{\s*pgfplots\s*\}\s*$", re.IGNORECASE
 )
+# Any package line (chemfig, mhchem, circuitikz, ...) is preamble-only in LaTeX.
+_USEPACKAGE_LINE_RE = re.compile(r"^\s*\\usepackage\b", re.IGNORECASE)
+_PGFPLOTSSET_LINE_RE = re.compile(r"^\s*\\pgfplotsset\b", re.IGNORECASE)
 
 
-def _strip_hoistable_preamble_lines(snippet: str) -> tuple[str, bool]:
-    """Remove lines that belong in the preamble, not inside \\begin{document}.
+def _split_preamble_lines(snippet: str) -> tuple[str, List[str]]:
+    """Split a snippet into (body, preamble lines).
 
-    Returns (body, stripped_usepackage_pgfplots).
+    Packages, TikZ libraries and ``\\pgfplotsset`` are preamble-only: emitted
+    inside ``\\begin{document}`` they fail ("Can be used only in preamble").
+    Every ``\\usepackage`` is hoisted, not just tikz/pgfplots, so a model can
+    ask for ``chemfig`` or ``circuitikz`` in a snippet without writing a full
+    document.
+
+    Returns (body, preamble_lines).
     """
-    lines = snippet.splitlines()
-    out: List[str] = []
-    stripped_pgfplots = False
-    for line in lines:
+    body: List[str] = []
+    preamble: List[str] = []
+    for line in snippet.splitlines():
         if (
-            _USETIKZLIBRARY_LINE_RE.match(line)
-            or _USEPACKAGE_TIKZ_LINE_RE.match(line)
-            or _USEPACKAGE_PGFPLOTS_LINE_RE.match(line)
+            _USEPACKAGE_LINE_RE.match(line)
+            or _USETIKZLIBRARY_LINE_RE.match(line)
+            or _PGFPLOTSSET_LINE_RE.match(line)
         ):
-            if _USEPACKAGE_PGFPLOTS_LINE_RE.match(line):
-                stripped_pgfplots = True
+            preamble.append(line.strip())
             continue
-        out.append(line)
-    return "\n".join(out).strip(), stripped_pgfplots
+        body.append(line)
+    return "\n".join(body).strip(), preamble
+
+
+def strip_tikz_documentclass(code: str) -> str:
+    """Remove a ``\\documentclass`` line so Kroki supplies its own class.
+
+    Kroki's ``tikz2svg`` *replaces* a documentclass line with
+    ``\\documentclass[tikz,dvisvgm]{standalone}`` (dropping any options), and
+    *prepends* that line when none is present. Sending no class line therefore
+    keeps every ``\\usepackage``/``\\pgfplotsset`` line intact and still gets
+    the TikZ-capable standalone class.
+    """
+    stripped = _DOCUMENTCLASS_RE.sub("", code, count=1)
+    return stripped.lstrip()
+
+
+_DOCUMENTCLASS_RE = re.compile(r"\\documentclass\s*(?:\[[^\]]*\]\s*)?\{[^}]*\}")
 
 
 def get_required_libraries(tikz_code: str) -> List[str]:
@@ -158,7 +181,9 @@ def wrap_tikz_standalone(
     """Wrap TikZ snippet in a minimal standalone LaTeX document.
 
     If the code already contains \\documentclass, it is returned unchanged.
-    Otherwise wraps in standalone with tikz and optional libraries.
+    Otherwise every preamble-only line (any ``\\usepackage``,
+    ``\\usetikzlibrary``, ``\\pgfplotsset``) is hoisted out of the body and the
+    snippet is wrapped in standalone with tikz and optional libraries.
 
     Args:
         tikz_code: TikZ picture or full document.
@@ -174,35 +199,48 @@ def wrap_tikz_standalone(
         return code
 
     original = code
-    body, stripped_pgfplots_usepackage = _strip_hoistable_preamble_lines(code)
+    body, preamble = _split_preamble_lines(code)
     if not body:
         body = original
-        stripped_pgfplots_usepackage = False
+        preamble = []
 
+    # "pgfplots" is a package, not a TikZ library: never emit it in \usetikzlibrary.
+    has_pgfplots_package = any(
+        _USEPACKAGE_PGFPLOTS_LINE_RE.match(line) for line in preamble
+    )
+
+    detected = get_required_libraries(original)
     if libraries is None:
-        libraries = list(get_required_libraries(original))
-        if stripped_pgfplots_usepackage and "pgfplots" not in libraries:
-            libraries.append("pgfplots")
+        libraries = list(detected)
     else:
         libraries = list(libraries)
+
+    needs_pgfplots = (
+        has_pgfplots_package or "pgfplots" in detected or "pgfplots" in libraries
+    )
+    libraries = [lib for lib in libraries if lib != "pgfplots"]
+    if needs_pgfplots:
+        if not has_pgfplots_package:
+            preamble.insert(0, "\\usepackage{pgfplots}")
+        if not any(_PGFPLOTSSET_LINE_RE.match(line) for line in preamble):
+            preamble.append("\\pgfplotsset{compat=1.18}")
+
+    for pkg in extra_packages or []:
+        package_line = f"\\usepackage{{{pkg}}}"
+        if package_line not in preamble:
+            preamble.append(package_line)
+
+    # \usepackage{tikz} is already emitted below; keep a duplicate out of the preamble.
+    preamble = [line for line in preamble if not _USEPACKAGE_TIKZ_LINE_RE.match(line)]
 
     lib_line = ""
     if libraries:
         lib_line = "\\usetikzlibrary{" + ",".join(libraries) + "}\n"
-
-    pkgs = list(extra_packages) if extra_packages else []
-
-    extra = ""
-    for pkg in pkgs:
-        extra += f"\\usepackage{{{pkg}}}\n"
-
-    # pgfplots needs to be loaded for \begin{axis} (or stripped \usepackage{pgfplots})
-    if "pgfplots" in libraries and "pgfplots" not in pkgs:
-        extra = "\\usepackage{pgfplots}\n\\pgfplotsset{compat=1.18}\n" + extra
+    preamble_text = "".join(line + "\n" for line in preamble)
 
     return f"""\\documentclass[border={border}]{{standalone}}
 \\usepackage{{tikz}}
-{extra}{lib_line}\\begin{{document}}
+{preamble_text}{lib_line}\\begin{{document}}
 {body}
 \\end{{document}}
 """

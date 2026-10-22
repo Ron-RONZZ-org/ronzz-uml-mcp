@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import datetime
 import logging
+import secrets
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,7 +43,7 @@ class DiagramRenderContext:
 
 
 def prepare_diagram_code(code: str, backend_type: str, theme: Optional[str]) -> str:
-    """Strip and wrap PlantUML when needed; TikZ snippets get standalone wrap; else strip only."""
+    """Strip and wrap PlantUML when needed; TikZ snippets get a standalone wrap; else strip only."""
     prepared_code = code.strip()
     if backend_type == "plantuml":
         if "@startuml" not in prepared_code:
@@ -53,10 +54,14 @@ def prepare_diagram_code(code: str, backend_type: str, theme: Optional[str]) -> 
             prepared_code = prepared_code.replace(
                 "@startuml", f"@startuml\n!theme {theme}"
             )
-    elif backend_type == "tikz" and "\\documentclass" not in prepared_code:
-        from tools.kroki.tikz import wrap_tikz_standalone
+    elif backend_type == "tikz":
+        from tools.kroki.tikz import strip_tikz_documentclass, wrap_tikz_standalone
 
-        prepared_code = wrap_tikz_standalone(prepared_code)
+        if "\\documentclass" not in prepared_code:
+            prepared_code = wrap_tikz_standalone(prepared_code)
+        # Kroki rewrites any documentclass line (dropping its options) and
+        # prepends its own when absent, so send it no class line at all.
+        prepared_code = strip_tikz_documentclass(prepared_code)
     return prepared_code
 
 
@@ -176,6 +181,7 @@ def _generate_diagram_plantuml_fallback(
     if output_dir:
         filename_prefix = (
             f"{diagram_type}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+            f"_{secrets.token_hex(3)}"
         )
         out_dir = Path(output_dir)
         try:
@@ -234,6 +240,7 @@ def _generate_diagram_mermaid_fallback(
     if output_dir:
         filename_prefix = (
             f"{diagram_type}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+            f"_{secrets.token_hex(3)}"
         )
         out_dir = Path(output_dir)
         try:
@@ -270,6 +277,7 @@ def try_kroki_render(
     client = kroki_client if kroki_client is not None else get_kroki_client()
     filename_prefix = (
         f"{ctx.diagram_type}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+        f"_{secrets.token_hex(3)}"
     )
 
     try:
