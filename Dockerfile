@@ -3,7 +3,7 @@
 # Stdio MCP: docker run ... python server.py --transport stdio
 # Smithery overrides the container command with python server.py (see smithery.yaml).
 # Runtime image tracks latest supported CPython (3.14). CI tests 3.12 and 3.14; pin to python:3.12-slim if you need the older baseline only.
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 WORKDIR /app
 
